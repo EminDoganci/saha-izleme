@@ -8,6 +8,7 @@ import time
 import sys
 from .forms import EditDeviceForm
 from .config import *
+from PIL import Image, ImageTk
 
 class Device:
     def __init__(self, canvas, app, name, ip, x, y, device_type, model, connected_port, starting_port):
@@ -28,24 +29,28 @@ class Device:
         self.original_x = x
         self.original_y = y
 
-        self.circle_size = 20  # Yuvarlak boyutu 20 olarak ayarlandı
+        self.circle_size = 20
         
         self.label_font = ("Arial", 10, "bold")
 
-        # Önce arka planı oluştur (rectangle)
-        self.label_bg = self.canvas.create_rectangle(0, 0, 0, 0, fill="black", stipple="gray25", outline="")
         self.circle = self.canvas.create_oval(0, 0, 0, 0, fill="red", outline="yellow", width=1.5)
-        self.pulsing_circle = self.canvas.create_oval(0, 0, 0, 0, fill="", outline="")
-        self.label = self.canvas.create_text(0, 0, text=name, anchor="w", font=self.label_font, fill="white")
+        
+        self.pulsing_circles = [
+            self.canvas.create_oval(0, 0, 0, 0, fill="", outline=""),
+            self.canvas.create_oval(0, 0, 0, 0, fill="", outline=""),
+            self.canvas.create_oval(0, 0, 0, 0, fill="", outline="")
+        ]
+        
+        self.label = self.canvas.create_text(0, 0, text=name, anchor="w", font=self.label_font, fill="#2c3e50")
         
         self.update_position_from_original()
 
-        self.canvas.tag_raise(self.label_bg)
+        # Görsel hiyerarşiyi düzenledik
         self.canvas.tag_raise(self.circle)
-        self.canvas.tag_raise(self.pulsing_circle)
-        self.canvas.tag_raise(self.label)
+        for p_circle in self.pulsing_circles:
+            self.canvas.tag_lower(p_circle, self.circle)
+        self.canvas.tag_raise(self.label) 
         
-        # Etkileşim için bağlamalar
         self.canvas.tag_bind(self.circle, "<Button-3>", self.show_context_menu)
         self.canvas.tag_bind(self.label, "<Button-3>", self.show_context_menu)
         self.canvas.tag_bind(self.circle, "<Button-1>", self.start_drag)
@@ -53,8 +58,6 @@ class Device:
         self.canvas.tag_bind(self.circle, "<B1-Motion>", self.on_drag)
         self.canvas.tag_bind(self.label, "<B1-Motion>", self.on_drag)
         
-        # Fareyle üzerine gelme (hover) olayları kaldırıldı
-
         self.ping_thread = threading.Thread(target=self.ping_host, daemon=True)
         self.ping_thread.start()
 
@@ -72,18 +75,6 @@ class Device:
 
         scaled_circle_size = self.circle_size * self.app.current_scale
         
-        # Etiketin genişliğini dinamik olarak ayarla
-        bbox = self.canvas.bbox(self.label)
-        if not bbox:
-            text_width = 0
-        else:
-            text_width = bbox[2] - bbox[0]
-            
-        label_x1 = canvas_x + scaled_circle_size + 3
-        label_y1 = canvas_y - 10
-        label_x2 = label_x1 + text_width + 10
-        label_y2 = canvas_y + 10
-
         self.canvas.coords(
             self.circle,
             canvas_x - scaled_circle_size,
@@ -91,27 +82,24 @@ class Device:
             canvas_x + scaled_circle_size,
             canvas_y + scaled_circle_size
         )
-        self.canvas.coords(self.label_bg, label_x1, label_y1, label_x2, label_y2)
-        self.canvas.coords(self.label, label_x1 + 5, canvas_y)
-        self.canvas.coords(
-            self.pulsing_circle,
-            canvas_x - scaled_circle_size,
-            canvas_y - scaled_circle_size,
-            canvas_x + scaled_circle_size,
-            canvas_y + scaled_circle_size
-        )
-        self.canvas.tag_raise(self.label_bg)
-        self.canvas.tag_raise(self.circle)
-        self.canvas.tag_raise(self.label)
-        self.canvas.tag_raise(self.pulsing_circle)
+        self.canvas.coords(self.label, canvas_x + scaled_circle_size + 5, canvas_y)
+        
+        for p_circle in self.pulsing_circles:
+            self.canvas.coords(
+                p_circle,
+                canvas_x - scaled_circle_size,
+                canvas_y - scaled_circle_size,
+                canvas_x + scaled_circle_size,
+                canvas_y + scaled_circle_size
+            )
 
     def start_drag(self, event):
         if not self.is_locked:
             self.drag_data = {"item": self.circle, "x": event.x, "y": event.y}
-            self.canvas.tag_raise(self.label_bg)
             self.canvas.tag_raise(self.circle)
-            self.canvas.tag_raise(self.label)
-            self.canvas.tag_raise(self.pulsing_circle)
+            for p_circle in self.pulsing_circles:
+                self.canvas.tag_lower(p_circle, self.circle)
+            self.canvas.tag_raise(self.label) 
 
     def on_drag(self, event):
         if not self.is_locked and self.drag_data:
@@ -119,9 +107,9 @@ class Device:
             dy = event.y - self.drag_data["y"]
             
             self.canvas.move(self.circle, dx, dy)
-            self.canvas.move(self.label_bg, dx, dy)
             self.canvas.move(self.label, dx, dy)
-            self.canvas.move(self.pulsing_circle, dx, dy)
+            for p_circle in self.pulsing_circles:
+                self.canvas.move(p_circle, dx, dy)
             
             self.drag_data["x"] = event.x
             self.drag_data["y"] = event.y
@@ -152,7 +140,8 @@ class Device:
         return "break"
 
     def edit_device(self):
-        EditDeviceForm(self.canvas, self)
+        # Önemli Düzeltme: `root` ve `self` (cihaz nesnesi) parametrelerini gönderiyoruz.
+        EditDeviceForm(self.app.root, self)
 
     def delete_device(self):
         if messagebox.askyesno("Cihazı Sil", f"{self.name} cihazını silmek istediğinizden emin misiniz?"):
@@ -165,11 +154,14 @@ class Device:
                     pass
 
             self.canvas.delete(self.circle)
-            self.canvas.delete(self.label_bg)
             self.canvas.delete(self.label)
-            self.canvas.delete(self.pulsing_circle)
+            for p_circle in self.pulsing_circles:
+                self.canvas.delete(p_circle)
             
-            self.app.devices.remove(self)
+            # Bu satırın varlığına dikkat edin, önemli!
+            if self in self.app.devices:
+                self.app.devices.remove(self)
+            
             self.app.device_list_panel.update_device_list()
 
     def toggle_lock(self):
@@ -236,44 +228,61 @@ class Device:
     def breathing_animation(self):
         if not self.is_alive or not self.is_reachable: return
         
-        pulse_value = abs(time.time() * 2 % 2 - 1)
-        green_val = int(255 * (0.5 + 0.5 * pulse_value))
-        hex_color = '#%02x%02x%02x' % (0, green_val, 0)
-        
-        self.canvas.itemconfigure(self.circle, fill=hex_color)
-        self.canvas.itemconfigure(self.pulsing_circle, outline="")
-        
-        if not self.is_locked:
-            self.canvas.itemconfigure(self.circle, outline="green")
-        
-        self.animation_id = self.canvas.after(50, self.breathing_animation)
-
-    def flashing_animation(self):
-        if not self.is_alive or self.is_reachable: return
-        
-        pulse_value = abs(time.time() * 2 % 2 - 1)
-        pulse_scale = 1 + pulse_value * 2 
-        
         coords = self.canvas.coords(self.circle)
         center_x = (coords[0] + coords[2]) / 2
         center_y = (coords[1] + coords[3]) / 2
         
-        size = self.circle_size * self.app.current_scale * pulse_scale
+        self.canvas.itemconfigure(self.circle, fill="#00ff00", outline="#00ff00")
         
-        hex_color = '#%02x%02x%02x' % (255, 0, 0)
+        current_time = time.time()
+        base_speed = 1.0
         
-        self.canvas.coords(
-            self.pulsing_circle,
-            center_x - size,
-            center_y - size,
-            center_x + size,
-            center_y + size
-        )
-        self.canvas.itemconfigure(self.pulsing_circle, outline=hex_color, width=3)
-
-        self.canvas.itemconfigure(self.circle, fill="red", outline="red")
-        
-        if not self.is_locked:
-            self.canvas.itemconfigure(self.circle, outline="red")
+        for i, circle in enumerate(self.pulsing_circles):
+            delay = i * 0.2 
+            pulse_value = (current_time * base_speed + delay) % 1
             
-        self.animation_id = self.canvas.after(50, self.flashing_animation)
+            size = self.circle_size * self.app.current_scale * (1 + pulse_value * 6) 
+            
+            alpha_value = int(255 * (1 - pulse_value) * 0.8)
+            hex_color = f'#00{alpha_value:02x}00'
+
+            x0 = center_x - size / 2
+            y0 = center_y - size / 2
+            x1 = center_x + size / 2
+            y1 = center_y + size / 2
+
+            self.canvas.coords(circle, x0, y0, x1, y1)
+            self.canvas.itemconfigure(circle, outline=hex_color, fill="", width=1)
+
+        self.animation_id = self.canvas.after(20, self.breathing_animation)
+
+    def flashing_animation(self):
+        if not self.is_alive or self.is_reachable: return
+
+        coords = self.canvas.coords(self.circle)
+        center_x = (coords[0] + coords[2]) / 2
+        center_y = (coords[1] + coords[3]) / 2
+        
+        self.canvas.itemconfigure(self.circle, fill="#ff0000", outline="#ff0000")
+
+        current_time = time.time()
+        base_speed = 2.0
+        
+        for i, circle in enumerate(self.pulsing_circles):
+            delay = i * 0.2 
+            pulse_value = (current_time * base_speed + delay) % 1
+            
+            size = self.circle_size * self.app.current_scale * (1 + pulse_value * 40) 
+            
+            alpha_value = int(255 * (1 - pulse_value) * 0.8)
+            hex_color = f'#{alpha_value:02x}0000'
+
+            x0 = center_x - size / 2
+            y0 = center_y - size / 2
+            x1 = center_x + size / 2
+            y1 = center_y + size / 2
+
+            self.canvas.coords(circle, x0, y0, x1, y1)
+            self.canvas.itemconfigure(circle, outline=hex_color, fill="", width=1)
+
+        self.animation_id = self.canvas.after(20, self.flashing_animation)
