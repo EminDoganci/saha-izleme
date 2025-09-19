@@ -7,11 +7,14 @@ from .config import *
 class DeviceListPanel:
     def __init__(self, master, app):
         self.app = app
+        # Arka plan rengi değiştirildi
         self.frame = tk.Frame(master, bg=BG_COLOR_DARK)
         self.frame.pack(side="right", fill="y", padx=10, pady=10)
+        # Yazı rengi değiştirildi
         self.label = tk.Label(self.frame, text="Bağlı Cihazlar", font=FONT_HEADING, bg=BG_COLOR_DARK, fg=FG_COLOR)
         self.label.pack(pady=10)
         
+        # Arka plan rengi değiştirildi
         self.list_frame = tk.Frame(self.frame, bg=BG_COLOR_LIST)
         self.list_frame.pack(fill="both", expand=True)
 
@@ -19,10 +22,10 @@ class DeviceListPanel:
         self.animation_ids = {}
 
     def update_device_list(self):
-        for device_name, anim_id in self.animation_ids.items():
+        for anim_id in self.animation_ids.values():
             try:
                 self.app.root.after_cancel(anim_id)
-            except ValueError:
+            except (ValueError, KeyError):
                 pass
         self.animation_ids = {}
         
@@ -53,6 +56,12 @@ class DeviceListPanel:
 
     def animate_list_item(self, device):
         if not device.is_alive or device.name not in self.device_items:
+            if device.name in self.animation_ids:
+                try:
+                    self.app.root.after_cancel(self.animation_ids[device.name])
+                except (ValueError, KeyError):
+                    pass
+                del self.animation_ids[device.name]
             return
             
         item = self.device_items[device.name]
