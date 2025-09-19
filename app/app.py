@@ -4,9 +4,10 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 from PIL import Image, ImageTk, ExifTags
 import sys
+import json
 from .device import Device
 from .ui_panels import DeviceListPanel
-from .forms import DeviceForm
+from .forms import AddDeviceForm, EditDeviceForm
 from .config import *
 
 class App:
@@ -22,6 +23,7 @@ class App:
         self.devices = []
         self.current_scale = 1.0
         self.pending_device_data = {}
+        self.map_file_path = None
 
         self.button_frame = tk.Frame(root, bg=BG_COLOR_DARK)
         self.button_frame.pack(side="top", fill="x")
@@ -29,10 +31,14 @@ class App:
         tk.Button(self.button_frame, text="Harita Yükle", command=self.load_map, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
         tk.Button(self.button_frame, text="Cihaz Ekle", command=self.show_add_form, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
         
+        # Yeni eklenen butonlar
+        tk.Button(self.button_frame, text="Projeyi Kaydet", command=self.save_project, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
+        tk.Button(self.button_frame, text="Projeyi Aç", command=self.load_project, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
+        
         self.main_frame = tk.Frame(root, bg=BG_COLOR_DARK)
         self.main_frame.pack(fill="both", expand=True)
 
-        self.canvas = tk.Canvas(self.main_frame, bg=BG_COLOR_DARK, highlightthickness=0)
+        self.canvas = tk.Canvas(self.main_frame, bg="white", highlightthickness=0)
         self.canvas.pack(side="left", fill="both", expand=True)
 
         self.canvas.bind("<Button-2>", self.start_pan)
@@ -41,19 +47,24 @@ class App:
 
         self.pan_start = None
         self.device_list_panel = DeviceListPanel(self.main_frame, self)
+        
+        self.root.update()
         self.load_map(initial_load=True)
 
     def on_resize(self, event):
         if self.original_image:
             self.load_map_to_fit()
 
-    def load_map(self, initial_load=False):
-        file_path = "dom_screennail+.png" if initial_load else filedialog.askopenfilename()
+    def load_map(self, initial_load=False, file_path=None):
+        if not file_path:
+            file_path = "ALTINOVA ATÖLYE ALANLARI - 2025.png" if initial_load else filedialog.askopenfilename()
+        
         if not file_path:
             return
 
+        self.map_file_path = file_path
         try:
-            self.original_image = Image.open(file_path)
+            self.original_image = Image.open(self.map_file_path)
             
             try:
                 exif = self.original_image._getexif()
@@ -77,10 +88,6 @@ class App:
     def load_map_to_fit(self):
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
-
-        if canvas_width == 1 and canvas_height == 1:
-            self.root.after(100, self.load_map_to_fit)
-            return
             
         img_width, img_height = self.original_image.size
         
@@ -143,17 +150,10 @@ class App:
             messagebox.showinfo("Bilgi", "Lütfen önce bir harita yükleyin.")
             return
 
-        DeviceForm(self.root, self.on_form_submit)
+        AddDeviceForm(self.root, self.on_form_submit)
 
-    def on_form_submit(self, name, ip, device_type, model, connected_port, starting_port):
-        self.pending_device_data = {
-            "name": name,
-            "ip": ip,
-            "device_type": device_type,
-            "model": model,
-            "connected_port": connected_port,
-            "starting_port": starting_port
-        }
+    def on_form_submit(self, device_data):
+        self.pending_device_data = device_data
         self.canvas.config(cursor="cross")
         messagebox.showinfo("Bilgi", "Lütfen cihazı eklemek istediğiniz yere tıklayın.")
         self.canvas.bind("<Button-1>", self.add_device_on_canvas)
@@ -176,3 +176,79 @@ class App:
         new_device = Device(self.canvas, self, data["name"], data["ip"], original_x, original_y, data["device_type"], data["model"], data["connected_port"], data["starting_port"])
         self.devices.append(new_device)
         self.device_list_panel.update_device_list()
+        
+    def save_project(self):
+        if not self.map_file_path:
+            messagebox.showerror("Hata", "Lütfen önce bir harita yükleyin.")
+            return
+            
+        file_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON Files", "*.json")])
+        if not file_path:
+            return
+
+        devices_data = []
+        for device in self.devices:
+            devices_data.append({
+                "name": device.name,
+                "ip": device.ip,
+                "x": device.original_x,
+                "y": device.original_y,
+                "device_type": device.device_type,
+                "model": device.model,
+                "connected_port": device.connected_port,
+                "starting_port": device.starting_port
+            })
+
+        project_data = {
+            "map_path": self.map_file_path,
+            "devices": devices_data
+        }
+
+        try:
+            with open(file_path, "w") as f:
+                json.dump(project_data, f, indent=4)
+            messagebox.showinfo("Bilgi", "Proje başarıyla kaydedildi.")
+        except Exception as e:
+            messagebox.showerror("Hata", f"Projeyi kaydederken bir hata oluştu: {e}")
+
+    def load_project(self):
+        file_path = filedialog.askopenfilename(defaultextension=".json", filetypes=[("JSON Files", "*.json")])
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, "r") as f:
+                project_data = json.load(f)
+
+            for device in self.devices:
+                device.delete_device()
+            self.devices.clear()
+
+            map_path = project_data.get("map_path")
+            if map_path:
+                self.load_map(file_path=map_path)
+            else:
+                messagebox.showerror("Hata", "Kayıtlı harita yolu bulunamadı.")
+                return
+
+            devices_data = project_data.get("devices", [])
+            for data in devices_data:
+                new_device = Device(
+                    self.canvas,
+                    self,
+                    data.get("name"),
+                    data.get("ip"),
+                    data.get("x"),
+                    data.get("y"),
+                    data.get("device_type"),
+                    data.get("model"),
+                    data.get("connected_port"),
+                    data.get("starting_port")
+                )
+                self.devices.append(new_device)
+                
+            self.device_list_panel.update_device_list()
+            messagebox.showinfo("Bilgi", "Proje başarıyla yüklendi.")
+            
+        except Exception as e:
+            messagebox.showerror("Hata", f"Projeyi yüklerken bir hata oluştu: {e}")
