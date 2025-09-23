@@ -3,6 +3,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import ipaddress
+import threading  # 👈 Eklendi — hemen ping için
 
 class AddDeviceForm(tk.Toplevel):
     def __init__(self, parent, on_submit):
@@ -91,6 +92,7 @@ class AddDeviceForm(tk.Toplevel):
         self.on_submit(device_data)
         self.destroy()
 
+
 class EditDeviceForm(tk.Toplevel):
     def __init__(self, parent, device): 
         super().__init__(parent)
@@ -174,6 +176,7 @@ class EditDeviceForm(tk.Toplevel):
             messagebox.showerror("Hata", "Geçersiz IP adresi formatı.", parent=self)
             return
 
+        # Verileri güncelle
         self.device.name = new_name
         self.device.ip = new_ip
         self.device.device_type = new_device_type
@@ -181,7 +184,22 @@ class EditDeviceForm(tk.Toplevel):
         self.device.connected_port = new_connected_port
         self.device.starting_port = new_starting_port
 
-        self.device.app.device_list_panel.update_device_list()
+        # Label’ı güncelle
         self.device.canvas.itemconfigure(self.device.label, text=new_name)
-        
+
+        # 👇 YENİ: Hemen ping at ve durumu güncelle
+        def immediate_ping_check():
+            try:
+                # Device sınıfının içindeki _perform_ping metodunu çağır
+                status = self.device._perform_ping()
+                # Tkinter thread güvenliği için after(0, ...) kullan
+                self.device.app.root.after(0, self.device.update_visual_and_list, status)
+            except Exception as e:
+                print(f"Anlık ping hatası: {e}")
+                self.device.app.root.after(0, self.device.update_visual_and_list, False)
+
+        # Arka planda hemen çalıştır
+        threading.Thread(target=immediate_ping_check, daemon=True).start()
+
+        # Formu kapat
         self.destroy()
