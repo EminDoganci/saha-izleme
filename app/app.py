@@ -1,14 +1,56 @@
-# app.py
-
 import tkinter as tk
-from tkinter import messagebox, filedialog
+from tkinter import messagebox, filedialog, ttk
 from PIL import Image, ImageTk, ExifTags
 import sys
 import json
+import threading
+import time  # 👈 EKLENDİ — PingWorker için gerekli
 from .device import Device
 from .ui_panels import DeviceListPanel
 from .forms import AddDeviceForm, EditDeviceForm
 from .config import *
+import os
+
+class PingWorker:
+    def __init__(self, app):
+        self.app = app
+        self.running = False
+        self.thread = None
+        self.devices_to_check = []
+
+    def start(self):
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self._worker_loop, daemon=True)
+            self.thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1)
+
+    def _worker_loop(self):
+        while self.running:
+            try:
+                devices = self.devices_to_check.copy()
+                self.devices_to_check.clear()
+
+                for device in devices:
+                    if not device.is_alive:
+                        continue
+                    try:
+                        status = device._perform_ping()
+                        if status != device.is_reachable:
+                            self.app.root.after(0, device.update_visual_and_list, status)
+                        else:
+                            self.app.root.after(0, device.update_visual, status)
+                    except Exception as e:
+                        print(f"Ping hatası: {e}")
+                        self.app.root.after(0, device.update_visual_and_list, False)
+            except Exception as e:
+                print(f"Worker hatası: {e}")
+
+            time.sleep(1)  # Her 1 saniyede bir kontrol
 
 class App:
     def __init__(self, root):
@@ -24,6 +66,12 @@ class App:
         self.current_scale = 1.0
         self.pending_device_data = {}
         self.map_file_path = None
+        self.ping_interval = PING_INTERVAL_SECONDS
+        self.selected_device = None
+
+        # PingWorker başlat
+        self.ping_worker = PingWorker(self)
+        self.ping_worker.start()
 
         self.button_frame = tk.Frame(root, bg=BG_COLOR_DARK)
         self.button_frame.pack(side="top", fill="x")
@@ -31,10 +79,27 @@ class App:
         tk.Button(self.button_frame, text="Harita Yükle", command=self.load_map, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
         tk.Button(self.button_frame, text="Cihaz Ekle", command=self.show_add_form, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
         
-        # Yeni eklenen butonlar
+        self.ping_button = tk.Button(self.button_frame, text="Seçili Cihaza Ping At", command=self.ping_selected_device, state="disabled", bg=BG_COLOR_MEDIUM, fg=FG_COLOR)
+        self.ping_button.pack(side="left", padx=5, pady=5)
+        
         tk.Button(self.button_frame, text="Projeyi Kaydet", command=self.save_project, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
         tk.Button(self.button_frame, text="Projeyi Aç", command=self.load_project, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
+
+        ping_frame = tk.Frame(self.button_frame, bg=BG_COLOR_DARK)
+        ping_frame.pack(side="right", padx=10)
+        tk.Label(ping_frame, text="Ping Aralığı:", bg=BG_COLOR_DARK, fg=FG_COLOR).pack(side="left", padx=(0, 5))
         
+        self.ping_interval_var = tk.StringVar()
+        self.ping_interval_combobox = ttk.Combobox(
+            ping_frame,
+            textvariable=self.ping_interval_var,
+            values=list(PING_OPTIONS.keys()),
+            state="readonly"
+        )
+        self.ping_interval_combobox.pack(side="left")
+        self.ping_interval_combobox.set("5 Dakika")
+        self.ping_interval_combobox.bind("<<ComboboxSelected>>", self.update_ping_interval)
+
         self.main_frame = tk.Frame(root, bg=BG_COLOR_DARK)
         self.main_frame.pack(fill="both", expand=True)
 
@@ -50,6 +115,15 @@ class App:
         
         self.root.update()
         self.load_map(initial_load=True)
+
+    def update_ping_interval(self, event=None):
+        selected_option = self.ping_interval_var.get()
+        new_interval = PING_OPTIONS.get(selected_option, PING_INTERVAL_SECONDS)
+        
+        if self.ping_interval != new_interval:
+            self.ping_interval = new_interval
+            for device in self.devices:
+                device.set_ping_interval(self.ping_interval)
 
     def on_resize(self, event):
         if self.original_image:
@@ -82,6 +156,9 @@ class App:
 
             self.load_map_to_fit()
 
+        except FileNotFoundError:
+            messagebox.showerror("Hata", "Harita dosyası bulunamadı. Lütfen dosya yolunu kontrol edin.")
+            self.map_file_path = None
         except Exception as e:
             messagebox.showerror("Hata", f"Harita yüklenemedi: {e}")
 
@@ -92,13 +169,18 @@ class App:
         img_width, img_height = self.original_image.size
         
         ratio = min(canvas_width / img_width, canvas_height / img_height)
-        self.current_scale = ratio
-        new_width = int(img_width * self.current_scale)
-        new_height = int(img_height * self.current_scale)
+        new_width = int(img_width * ratio)
+        new_height = int(img_height * ratio)
 
-        self.image = self.original_image.resize((new_width, new_height), Image.LANCZOS)
-        self.photo = ImageTk.PhotoImage(self.image)
-        
+        # 👇 ÖNCEKİ BOYUTLA AYNIYSA TEKRAR BOYUTLANDIRMA!
+        if (hasattr(self, '_last_resized_size') and 
+            self._last_resized_size == (new_width, new_height)):
+            pass
+        else:
+            self.image = self.original_image.resize((new_width, new_height), Image.LANCZOS)
+            self.photo = ImageTk.PhotoImage(self.image)
+            self._last_resized_size = (new_width, new_height)
+
         if self.image_id:
             self.canvas.delete(self.image_id)
         
@@ -123,6 +205,9 @@ class App:
             self.pan_start = (event.x, event.y)
 
     def zoom(self, event):
+        if not self.original_image:
+            return
+
         zoom_factor = 1.1 if event.delta > 0 else 0.9
         if sys.platform.startswith("linux"):
             zoom_factor = 1.1 if event.delta < 0 else 0.9
@@ -177,6 +262,9 @@ class App:
         self.devices.append(new_device)
         self.device_list_panel.update_device_list()
         
+        # Ping worker'a ekle
+        self.ping_worker.devices_to_check.append(new_device)
+        
     def save_project(self):
         if not self.map_file_path:
             messagebox.showerror("Hata", "Lütfen önce bir harita yükleyin.")
@@ -223,10 +311,19 @@ class App:
             for device in self.devices:
                 device.delete_device()
             self.devices.clear()
+            self.device_list_panel.clear_listbox()
 
             map_path = project_data.get("map_path")
-            if map_path:
+            if map_path and os.path.exists(map_path):
                 self.load_map(file_path=map_path)
+            elif map_path and not os.path.exists(map_path):
+                messagebox.showwarning("Harita Bulunamadı", f"Projeye ait harita dosyası bulunamadı:\n{map_path}\n\nCihazlar yine de yüklenecek ancak harita gösterilemeyecek.")
+                self.image = None
+                self.original_image = None
+                self.photo = None
+                if self.image_id:
+                    self.canvas.delete(self.image_id)
+                self.image_id = None
             else:
                 messagebox.showerror("Hata", "Kayıtlı harita yolu bulunamadı.")
                 return
@@ -246,9 +343,28 @@ class App:
                     data.get("starting_port")
                 )
                 self.devices.append(new_device)
+                self.device_list_panel.add_device_to_list(new_device)
+                
+            # Ping worker'a tüm cihazları ekle
+            self.ping_worker.devices_to_check.extend(self.devices)
                 
             self.device_list_panel.update_device_list()
             messagebox.showinfo("Bilgi", "Proje başarıyla yüklendi.")
             
+        except FileNotFoundError:
+            messagebox.showerror("Hata", f"Dosya bulunamadı: {file_path}")
+        except json.JSONDecodeError:
+            messagebox.showerror("Hata", "Seçilen dosya geçerli bir JSON formatında değil.")
         except Exception as e:
             messagebox.showerror("Hata", f"Projeyi yüklerken bir hata oluştu: {e}")
+            
+    def set_selected_device(self, device):
+        self.selected_device = device
+        if self.selected_device:
+            self.ping_button.config(state="normal")
+        else:
+            self.ping_button.config(state="disabled")
+
+    def ping_selected_device(self):
+        if self.selected_device:
+            self.selected_device.ping_with_terminal()
