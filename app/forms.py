@@ -3,7 +3,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import ipaddress
-import threading  # 👈 Eklendi — hemen ping için
+import threading  
 
 class AddDeviceForm(tk.Toplevel):
     def __init__(self, parent, on_submit):
@@ -187,7 +187,7 @@ class EditDeviceForm(tk.Toplevel):
         # Label’ı güncelle
         self.device.canvas.itemconfigure(self.device.label, text=new_name)
 
-        # 👇 YENİ: Hemen ping at ve durumu güncelle
+       
         def immediate_ping_check():
             try:
                 # Device sınıfının içindeki _perform_ping metodunu çağır
