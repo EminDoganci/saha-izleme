@@ -39,7 +39,7 @@ class DeviceListPanel:
 
         self.device_items = {}
         self.animation_ids = {}
-        self.animation_id_global = None  # 👈 Tek global animasyon döngüsü
+        self.animation_id_global = None  
 
         # Global animasyon başlat
         self.animate_all_items()
