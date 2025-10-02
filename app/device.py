@@ -83,7 +83,7 @@ class Device:
                 if new_status != self.is_reachable:
                     self.app.root.after(0, self.update_visual_and_list, new_status)
                 else:
-                    # 👇 Durum aynı olsa bile görseli zorla güncelle — bozulmaları önler
+                   
                     self.app.root.after(0, self.update_visual, new_status)
             except Exception as e:
                 print(f"Ping döngüsü hatası: {e}")
@@ -111,7 +111,7 @@ class Device:
             )
             
             if sys.platform.startswith("win"):
-                # 👇 Windows'ta ping çıktısını dikkatli analiz et
+                
                 stdout_lower = result.stdout.lower()
                 if "destination host unreachable" in stdout_lower:
                     return False
@@ -148,7 +148,7 @@ class Device:
         if old_ip != self.ip:
             self.start_ping_thread()
             
-            # 👇 Hemen yeni IP'ye ping at ve durumu güncelle
+            
             def immediate_ping_check():
                 try:
                     new_status = self._perform_ping()
@@ -260,7 +260,7 @@ class Device:
             for p_circle in self.pulsing_circles:
                 self.canvas.delete(p_circle)
             
-            # 👇 PING WORKER'DAN TEMİZLE — hata önlemek için hasattr kontrolü
+            
             if hasattr(self.app, 'ping_worker') and self in self.app.ping_worker.devices_to_check:
                 self.app.ping_worker.devices_to_check.remove(self)
 
@@ -270,9 +270,10 @@ class Device:
             self.app.device_list_panel.update_device_list()
             self.app.set_selected_device(None) 
             
+    
     def toggle_lock(self):
         self.is_locked = not self.is_locked
-        self.update_color()
+        self.update_visual(self.is_reachable)  
         self.app.device_list_panel.update_device_list()
             
     def ping_with_terminal(self):
@@ -283,7 +284,7 @@ class Device:
         try:
             if sys.platform.startswith("win"):
                 cmd = f"ping {self.ip} -t"
-                messagebox.showinfo("Bilgi", f"{self.name} cihazına ({self.ip}) ping atılıyor.\n\nCMD penceresinde görünen IP, ağ yönlendirmesi veya yerel makine IP’si olabilir.\n\nUygulama içindeki durum, gerçek ping sonucunu yansıtır.")
+                messagebox.showinfo("Bilgi", f"{self.name} cihazına ({self.ip}) ping atılıyor.\n\nCMD penceresinde görülen IP, ağ yönlendirmesi veya yerel makine IP’si olabilir.\n\nUygulama içindeki durum, gerçek ping sonucunu yansıtır.")
                 self.process = subprocess.Popen(
                     ["start", "cmd", "/k", cmd],
                     shell=True
@@ -383,7 +384,7 @@ class Device:
             size = self.circle_size * self.app.current_scale * (1 + pulse_value * 40)  
             
             alpha_value = int(255 * (1 - pulse_value) * 0.8)
-            # 🔴 Kırmızı dalgalar için en az #3C0000 (60) garanti et
+            
             hex_color = f'#{max(alpha_value, 60):02x}0000'
 
             x0 = center_x - size / 2
@@ -392,7 +393,7 @@ class Device:
             y1 = center_y + size / 2
 
             self.canvas.coords(circle, x0, y0, x1, y1)
-            # 💡 Opsiyonel: width=2 ile daha belirgin kırmızı dalgalar
+            
             self.canvas.itemconfigure(circle, outline=hex_color, fill="", width=2)
 
         self.animation_id = self.canvas.after(20, self.flashing_animation)
