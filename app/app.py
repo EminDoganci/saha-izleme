@@ -4,7 +4,7 @@ from PIL import Image, ImageTk, ExifTags
 import sys
 import json
 import threading
-import time  # 👈 EKLENDİ — PingWorker için gerekli
+import time  
 from .device import Device
 from .ui_panels import DeviceListPanel
 from .forms import AddDeviceForm, EditDeviceForm
@@ -84,6 +84,9 @@ class App:
         
         tk.Button(self.button_frame, text="Projeyi Kaydet", command=self.save_project, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
         tk.Button(self.button_frame, text="Projeyi Aç", command=self.load_project, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
+        
+      
+        tk.Button(self.button_frame, text="Hakkında", command=self.show_about, bg=BG_COLOR_MEDIUM, fg=FG_COLOR).pack(side="left", padx=5, pady=5)
 
         ping_frame = tk.Frame(self.button_frame, bg=BG_COLOR_DARK)
         ping_frame.pack(side="right", padx=10)
@@ -114,7 +117,20 @@ class App:
         self.device_list_panel = DeviceListPanel(self.main_frame, self)
         
         self.root.update()
-        self.load_map(initial_load=True)
+        # İLK AÇILIŞTA HARİTA YÜKLENMEZ — KULLANICI KENDİ YÜKLER
+
+ 
+    def show_about(self):
+        about_text = (
+            "Saha İzleme Uygulaması\n"
+            "Versiyon: 5.0\n"
+            "Geliştirici: Emin DOĞANCI - Beytullah MEHEL\n"
+            "Tarih: 2025\n\n"
+            "Bu uygulama, saha cihazlarının harita üzerinde\n"
+            "gerçek zamanlı izlenmesi amacıyla geliştirilmiştir.\n"
+            "Ping ile ulaşılabilirlik kontrolü sağlanır."
+        )
+        messagebox.showinfo("Hakkında", about_text)
 
     def update_ping_interval(self, event=None):
         selected_option = self.ping_interval_var.get()
@@ -172,7 +188,7 @@ class App:
         new_width = int(img_width * ratio)
         new_height = int(img_height * ratio)
 
-        # 👇 ÖNCEKİ BOYUTLA AYNIYSA TEKRAR BOYUTLANDIRMA!
+        
         if (hasattr(self, '_last_resized_size') and 
             self._last_resized_size == (new_width, new_height)):
             pass
@@ -284,7 +300,8 @@ class App:
                 "device_type": device.device_type,
                 "model": device.model,
                 "connected_port": device.connected_port,
-                "starting_port": device.starting_port
+                "starting_port": device.starting_port,
+                "is_locked": device.is_locked  
             })
 
         project_data = {
@@ -308,8 +325,25 @@ class App:
             with open(file_path, "r") as f:
                 project_data = json.load(f)
 
+           
             for device in self.devices:
-                device.delete_device()
+                device.is_alive = False
+                if device.ping_thread and device.ping_thread.is_alive():
+                    device.ping_thread.join(timeout=1)
+                if device.animation_id:
+                    try:
+                        self.canvas.after_cancel(device.animation_id)
+                    except ValueError:
+                        pass
+                self.canvas.delete(device.circle)
+                self.canvas.delete(device.label)
+                for p_circle in device.pulsing_circles:
+                    self.canvas.delete(p_circle)
+                
+                # Ping worker'dan temizle
+                if hasattr(self, 'ping_worker') and device in self.ping_worker.devices_to_check:
+                    self.ping_worker.devices_to_check.remove(device)
+
             self.devices.clear()
             self.device_list_panel.clear_listbox()
 
@@ -342,12 +376,20 @@ class App:
                     data.get("connected_port"),
                     data.get("starting_port")
                 )
+               
+                new_device.is_locked = data.get("is_locked", False)
+                new_device.update_visual(new_device.is_reachable)  # Görseli güncelle
+
                 self.devices.append(new_device)
                 self.device_list_panel.add_device_to_list(new_device)
                 
             # Ping worker'a tüm cihazları ekle
             self.ping_worker.devices_to_check.extend(self.devices)
                 
+         
+            for device in self.devices:
+                device.update_position_from_original()
+
             self.device_list_panel.update_device_list()
             messagebox.showinfo("Bilgi", "Proje başarıyla yüklendi.")
             
